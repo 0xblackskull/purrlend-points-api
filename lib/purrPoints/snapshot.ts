@@ -157,13 +157,29 @@ export async function runSnapshot(): Promise<SnapshotResult> {
     provider
   );
 
-  const currentBlock = await provider.getBlockNumber();
-  const fromBlock = Math.max(0, currentBlock - 999); // ~100k blocks back
+const currentBlock = await provider.getBlockNumber();
+const BLOCKS_PER_CHUNK = 10; // Alchemy free tier limit
+const TOTAL_BLOCKS_TO_SCAN = 1000; // scan last 1000 blocks total
+const fromBlock = Math.max(0, currentBlock - TOTAL_BLOCKS_TO_SCAN);
 
-  const [supplyEvents, borrowEvents] = await Promise.all([
-    poolContract.queryFilter(poolContract.filters.Supply(), fromBlock, currentBlock),
-    poolContract.queryFilter(poolContract.filters.Borrow(), fromBlock, currentBlock),
+// Scan in 10-block chunks to avoid Alchemy rate limits
+const supplyEvents: any[] = [];
+const borrowEvents: any[] = [];
+
+for (let start = fromBlock; start <= currentBlock; start += BLOCKS_PER_CHUNK) {
+  const end = Math.min(start + BLOCKS_PER_CHUNK - 1, currentBlock);
+  
+  const [supply, borrow] = await Promise.all([
+    poolContract.queryFilter(poolContract.filters.Supply(), start, end),
+    poolContract.queryFilter(poolContract.filters.Borrow(), start, end),
   ]);
+  
+  supplyEvents.push(...supply);
+  borrowEvents.push(...borrow);
+  
+  // Small delay to avoid rate limits
+  await new Promise(resolve => setTimeout(resolve, 100));
+}
 
   const walletSet = new Set<string>();
   for (const e of [...supplyEvents, ...borrowEvents]) {
