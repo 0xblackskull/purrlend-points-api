@@ -179,11 +179,16 @@ export async function runSnapshot(): Promise<SnapshotResult> {
   let totalBorrowUsd = 0;
   let totalPointsAwarded = 0;
 
-  const BATCH_SIZE = 10; // process 10 wallets at a time to avoid RPC rate limits
-  for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
-    const batch = wallets.slice(i, i + BATCH_SIZE);
+  const BATCH_SIZE = 3; // process 3 wallets at a time (public RPC is rate limited)
+    for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
+      const batch = wallets.slice(i, i + BATCH_SIZE);
+    
+      // Add 500ms delay between batches to avoid rate limits
+      if (i > 0) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
 
-    await Promise.all(batch.map(async (wallet) => {
+  await Promise.all(batch.map(async (wallet) => {
       try {
         const [userReserves] = await uiContract.getUserReservesData(
           POINTS_CONFIG.POOL_ADDRESS_PROVIDER,
