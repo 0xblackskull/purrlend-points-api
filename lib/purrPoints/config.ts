@@ -47,7 +47,7 @@ export const POINTS_CONFIG = {
 
   // ── Chain / Contracts ──────────────────────────────────────────────────────
   CHAIN_ID: 999,
-  RPC_URL: 'https://rpc.hyperliquid.xyz/evm',
+  RPC_URL: process.env.ALCHEMY_RPC_URL || 'https://rpc.hyperliquid.xyz/evm',
   LENDING_POOL:            '0xb61218d3efE306f7579eE50D1a606d56bc222048',
   UI_POOL_DATA_PROVIDER:   '0x0C591b5A3615c21cbd09F028F2E4509C2938F65E',
   POOL_ADDRESS_PROVIDER:   '0xf33e33b35163ce2f46bf7150e1592839ac199124',
