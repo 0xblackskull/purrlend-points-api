@@ -1,0 +1,23 @@
+{
+  "name": "purrlend-points-api",
+  "version": "1.0.0",
+  "description": "Purr Points System Backend API",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p $PORT"
+  },
+  "dependencies": {
+    "next": "^14.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "better-sqlite3": "^9.2.2",
+    "ethers": "^6.9.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.0",
+    "typescript": "^5.3.0"
+  }
+}
