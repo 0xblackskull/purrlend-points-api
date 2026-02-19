@@ -158,7 +158,7 @@ export async function runSnapshot(): Promise<SnapshotResult> {
   );
 
   const currentBlock = await provider.getBlockNumber();
-  const fromBlock = Math.max(0, currentBlock - 100000); // ~100k blocks back
+  const fromBlock = Math.max(0, currentBlock - 999); // ~100k blocks back
 
   const [supplyEvents, borrowEvents] = await Promise.all([
     poolContract.queryFilter(poolContract.filters.Supply(), fromBlock, currentBlock),
