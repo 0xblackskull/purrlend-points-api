@@ -80,7 +80,7 @@ export type AssetBreakdown = {
 // ── Wallet Points Functions ──────────────────────────────────────────────────
 
 export function getWalletPoints(wallet: string, season: number): WalletPoints | null {
-  const row = db
+  const row: any = db
     .prepare(
       `SELECT wallet, season, supply_points, borrow_points, total_points, last_updated
        FROM wallet_points
@@ -101,7 +101,7 @@ export function getWalletPoints(wallet: string, season: number): WalletPoints | 
 }
 
 export function getWalletBreakdown(wallet: string, season: number): AssetBreakdown[] {
-  const rows = db
+  const rows: any[] = db
     .prepare(
       `SELECT asset, symbol, supply_points, borrow_points, supply_usd, borrow_usd
        FROM wallet_asset_breakdown
@@ -121,7 +121,7 @@ export function getWalletBreakdown(wallet: string, season: number): AssetBreakdo
 }
 
 export function getLeaderboard(season: number, limit: number): WalletPoints[] {
-  const rows = db
+  const rows: any[] = db
     .prepare(
       `SELECT wallet, season, supply_points, borrow_points, total_points, last_updated
        FROM wallet_points
@@ -142,7 +142,7 @@ export function getLeaderboard(season: number, limit: number): WalletPoints[] {
 }
 
 export function getLastSnapshotTime(season: number): number {
-  const row = db
+  const row: any = db
     .prepare(
       `SELECT MAX(ran_at) as last_run
        FROM snapshot_log
@@ -246,14 +246,14 @@ export function bulkAddWallets(wallets: string[]): void {
 }
 
 export function getActiveWallets(): string[] {
-  const rows = db
+  const rows: any[] = db
     .prepare('SELECT wallet FROM active_wallets ORDER BY last_active DESC')
     .all();
   
-  return rows.map((r: any) => r.wallet);
+  return rows.map((r) => r.wallet);
 }
 
 export function getWalletCount(): number {
-  const row = db.prepare('SELECT COUNT(*) as count FROM active_wallets').get();
-  return (row as any).count;
+  const row: any = db.prepare('SELECT COUNT(*) as count FROM active_wallets').get();
+  return row.count;
 }
