@@ -159,7 +159,7 @@ export async function runSnapshot(): Promise<SnapshotResult> {
 
 const currentBlock = await provider.getBlockNumber();
 const BLOCKS_PER_CHUNK = 10; // Alchemy free tier limit
-const TOTAL_BLOCKS_TO_SCAN = 1000; // scan last 1000 blocks total
+const TOTAL_BLOCKS_TO_SCAN = 100000; // scan last 1000 blocks total
 const fromBlock = Math.max(0, currentBlock - TOTAL_BLOCKS_TO_SCAN);
 
 // Scan in 10-block chunks to avoid Alchemy rate limits
