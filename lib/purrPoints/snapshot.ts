@@ -170,6 +170,12 @@ export async function runSnapshot(): Promise<SnapshotResult> {
           wallet
         );
 
+        console.log(`[DEBUG] Wallet ${wallet.slice(0,8)} has ${userReserves.length} reserves`);
+          if (userReserves.length > 0) {
+            console.log(`[DEBUG] First reserve:`, userReserves[0].underlyingAsset, 
+              'Supply:', userReserves[0].scaledATokenBalance.toString());
+          }
+
         let supplyPts = 0;
         let borrowPts = 0;
         const breakdown: AssetBreakdown[] = [];
