@@ -139,7 +139,11 @@ export async function runSnapshot(): Promise<SnapshotResult> {
       borrow: Number(reserve.variableBorrowIndex) / 1e27,
       decimals,
     };
+      console.log(`[DEBUG] Asset ${asset.slice(0,8)}: price=$${priceMap[asset].toFixed(4)}, priceInRef=${priceInRef}, decimals=${decimals}`);
+
   }
+  console.log(`[DEBUG] marketRefUnit=${marketRefUnit}, marketRefPriceUsd=${marketRefPriceUsd}`);
+
 
   console.log(`[Snapshot] Loaded ${Object.keys(priceMap).length} reserves`);
 
