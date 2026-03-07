@@ -33,5 +33,5 @@ export const config = {
     responseLimit: false,
     externalResolver: true,
   },
-  maxDuration: 60, // 60 seconds max
+  maxDuration: 300, // 60 seconds max
 };
