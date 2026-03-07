@@ -1,72 +1,64 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Purr Points — Database Layer (SQLite via better-sqlite3)
-// Install: npm install better-sqlite3 @types/better-sqlite3
-//
-// This file does 3 things:
-//   1. Creates the database file on first run (auto, no setup needed)
-//   2. Creates tables if they don't exist
-//   3. Exposes simple functions to read/write points
+// Purr Points — Database Layer
+// SQLite database for storing wallet points, breakdowns, and snapshot logs
 // ─────────────────────────────────────────────────────────────────────────────
 
 import Database from 'better-sqlite3';
-import path from 'path';
+import * as path from 'path';
 
-// Database file lives in the project root — change path if needed
-const DB_PATH = path.join(process.cwd(), 'purr-points.db');
+// Database file location (persists across deployments on Railway)
+const dbPath = path.join(process.cwd(), 'purr-points.db');
+const db = new Database(dbPath);
 
-// ── Open (or create) the database ────────────────────────────────────────────
-// better-sqlite3 is synchronous — no async/await needed
-let _db: Database.Database | null = null;
+// Enable WAL mode for better concurrency
+db.pragma('journal_mode = WAL');
 
-function getDb(): Database.Database {
-  if (_db) return _db;
+// ── Create Tables ────────────────────────────────────────────────────────────
 
-  _db = new Database(DB_PATH);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wallet_points (
+    wallet TEXT NOT NULL,
+    season INTEGER NOT NULL,
+    supply_points REAL NOT NULL DEFAULT 0,
+    borrow_points REAL NOT NULL DEFAULT 0,
+    total_points REAL NOT NULL DEFAULT 0,
+    last_updated INTEGER NOT NULL,
+    PRIMARY KEY (wallet, season)
+  ) WITHOUT ROWID;
 
-  // Enable WAL mode — faster reads/writes on busy servers
-  _db.pragma('journal_mode = WAL');
+  CREATE TABLE IF NOT EXISTS wallet_asset_breakdown (
+    wallet TEXT NOT NULL,
+    season INTEGER NOT NULL,
+    asset TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    supply_points REAL NOT NULL DEFAULT 0,
+    borrow_points REAL NOT NULL DEFAULT 0,
+    supply_usd REAL NOT NULL DEFAULT 0,
+    borrow_usd REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (wallet, season, asset)
+  ) WITHOUT ROWID;
 
-  // Create tables if they don't already exist
-  _db.exec(`
-    -- Stores total points per wallet per season
-    CREATE TABLE IF NOT EXISTS wallet_points (
-      wallet      TEXT NOT NULL,
-      season      INTEGER NOT NULL DEFAULT 1,
-      supply_points  REAL NOT NULL DEFAULT 0,
-      borrow_points  REAL NOT NULL DEFAULT 0,
-      total_points   REAL NOT NULL DEFAULT 0,
-      last_updated   INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (wallet, season)
-    );
+  CREATE TABLE IF NOT EXISTS snapshot_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    season INTEGER NOT NULL,
+    ran_at INTEGER NOT NULL,
+    wallets INTEGER NOT NULL,
+    points REAL NOT NULL,
+    duration_ms INTEGER NOT NULL
+  );
 
-    -- Stores per-asset breakdown per wallet per season
-    CREATE TABLE IF NOT EXISTS wallet_asset_breakdown (
-      wallet         TEXT NOT NULL,
-      season         INTEGER NOT NULL DEFAULT 1,
-      asset          TEXT NOT NULL,
-      symbol         TEXT NOT NULL,
-      supply_points  REAL NOT NULL DEFAULT 0,
-      borrow_points  REAL NOT NULL DEFAULT 0,
-      supply_usd     REAL NOT NULL DEFAULT 0,
-      borrow_usd     REAL NOT NULL DEFAULT 0,
-      PRIMARY KEY (wallet, season, asset)
-    );
+  CREATE TABLE IF NOT EXISTS active_wallets (
+    wallet TEXT PRIMARY KEY,
+    first_seen INTEGER NOT NULL,
+    last_active INTEGER NOT NULL
+  ) WITHOUT ROWID;
 
-    -- Tracks when each snapshot ran
-    CREATE TABLE IF NOT EXISTS snapshot_log (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      season      INTEGER NOT NULL,
-      ran_at      INTEGER NOT NULL,
-      wallets     INTEGER NOT NULL DEFAULT 0,
-      points      REAL NOT NULL DEFAULT 0,
-      duration_ms INTEGER NOT NULL DEFAULT 0
-    );
-  `);
-
-  return _db;
-}
+  CREATE INDEX IF NOT EXISTS idx_active_wallets_last_active 
+    ON active_wallets(last_active);
+`);
 
 // ── Types ────────────────────────────────────────────────────────────────────
+
 export type WalletPoints = {
   wallet: string;
   season: number;
@@ -85,14 +77,19 @@ export type AssetBreakdown = {
   borrowUsd: number;
 };
 
-// ── Read: get points for one wallet ──────────────────────────────────────────
+// ── Wallet Points Functions ──────────────────────────────────────────────────
+
 export function getWalletPoints(wallet: string, season: number): WalletPoints | null {
-  const db = getDb();
-  const row = db.prepare(`
-    SELECT * FROM wallet_points WHERE wallet = ? AND season = ?
-  `).get(wallet.toLowerCase(), season) as any;
+  const row = db
+    .prepare(
+      `SELECT wallet, season, supply_points, borrow_points, total_points, last_updated
+       FROM wallet_points
+       WHERE wallet = ? AND season = ?`
+    )
+    .get(wallet.toLowerCase(), season);
 
   if (!row) return null;
+
   return {
     wallet: row.wallet,
     season: row.season,
@@ -103,12 +100,15 @@ export function getWalletPoints(wallet: string, season: number): WalletPoints | 
   };
 }
 
-// ── Read: get asset breakdown for one wallet ──────────────────────────────────
 export function getWalletBreakdown(wallet: string, season: number): AssetBreakdown[] {
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT * FROM wallet_asset_breakdown WHERE wallet = ? AND season = ?
-  `).all(wallet.toLowerCase(), season) as any[];
+  const rows = db
+    .prepare(
+      `SELECT asset, symbol, supply_points, borrow_points, supply_usd, borrow_usd
+       FROM wallet_asset_breakdown
+       WHERE wallet = ? AND season = ?
+       ORDER BY (supply_points + borrow_points) DESC`
+    )
+    .all(wallet.toLowerCase(), season);
 
   return rows.map((r) => ({
     asset: r.asset,
@@ -120,15 +120,16 @@ export function getWalletBreakdown(wallet: string, season: number): AssetBreakdo
   }));
 }
 
-// ── Read: leaderboard ─────────────────────────────────────────────────────────
-export function getLeaderboard(season: number, limit = 100): WalletPoints[] {
-  const db = getDb();
-  const rows = db.prepare(`
-    SELECT * FROM wallet_points
-    WHERE season = ?
-    ORDER BY total_points DESC
-    LIMIT ?
-  `).all(season, limit) as any[];
+export function getLeaderboard(season: number, limit: number): WalletPoints[] {
+  const rows = db
+    .prepare(
+      `SELECT wallet, season, supply_points, borrow_points, total_points, last_updated
+       FROM wallet_points
+       WHERE season = ?
+       ORDER BY total_points DESC
+       LIMIT ?`
+    )
+    .all(season, limit);
 
   return rows.map((r) => ({
     wallet: r.wallet,
@@ -140,16 +141,18 @@ export function getLeaderboard(season: number, limit = 100): WalletPoints[] {
   }));
 }
 
-// ── Read: last snapshot time ───────────────────────────────────────────────────
 export function getLastSnapshotTime(season: number): number {
-  const db = getDb();
-  const row = db.prepare(`
-    SELECT ran_at FROM snapshot_log WHERE season = ? ORDER BY ran_at DESC LIMIT 1
-  `).get(season) as any;
-  return row?.ran_at ?? 0;
+  const row = db
+    .prepare(
+      `SELECT MAX(ran_at) as last_run
+       FROM snapshot_log
+       WHERE season = ?`
+    )
+    .get(season);
+
+  return row?.last_run ?? 0;
 }
 
-// ── Write: upsert points for one wallet (accumulate, don't overwrite) ─────────
 export function upsertWalletPoints(
   wallet: string,
   season: number,
@@ -157,85 +160,81 @@ export function upsertWalletPoints(
   addBorrowPoints: number,
   breakdown: AssetBreakdown[]
 ): void {
-  const db = getDb();
+  const walletLower = wallet.toLowerCase();
   const now = Date.now();
-  const w = wallet.toLowerCase();
+  const addTotal = addSupplyPoints + addBorrowPoints;
 
-  // Use a transaction so all writes succeed or none do
-  const upsert = db.transaction(() => {
-    // Upsert total points — add to existing
-    db.prepare(`
-      INSERT INTO wallet_points (wallet, season, supply_points, borrow_points, total_points, last_updated)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(wallet, season) DO UPDATE SET
-        supply_points = supply_points + excluded.supply_points,
-        borrow_points = borrow_points + excluded.borrow_points,
-        total_points  = total_points  + excluded.supply_points + excluded.borrow_points,
-        last_updated  = excluded.last_updated
-    `).run(w, season, addSupplyPoints, addBorrowPoints, addSupplyPoints + addBorrowPoints, now);
+  const transaction = db.transaction(() => {
+    // Upsert wallet_points (accumulate points)
+    db.prepare(
+      `INSERT INTO wallet_points (wallet, season, supply_points, borrow_points, total_points, last_updated)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(wallet, season) DO UPDATE SET
+         supply_points = supply_points + excluded.supply_points,
+         borrow_points = borrow_points + excluded.borrow_points,
+         total_points = total_points + excluded.total_points,
+         last_updated = excluded.last_updated`
+    ).run(walletLower, season, addSupplyPoints, addBorrowPoints, addTotal, now);
 
-    // Upsert per-asset breakdown
+    // Upsert asset breakdown (accumulate per-asset points)
+    const stmt = db.prepare(
+      `INSERT INTO wallet_asset_breakdown 
+         (wallet, season, asset, symbol, supply_points, borrow_points, supply_usd, borrow_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(wallet, season, asset) DO UPDATE SET
+         supply_points = supply_points + excluded.supply_points,
+         borrow_points = borrow_points + excluded.borrow_points,
+         supply_usd = excluded.supply_usd,
+         borrow_usd = excluded.borrow_usd`
+    );
+
     for (const b of breakdown) {
-      db.prepare(`
-        INSERT INTO wallet_asset_breakdown
-          (wallet, season, asset, symbol, supply_points, borrow_points, supply_usd, borrow_usd)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(wallet, season, asset) DO UPDATE SET
-          supply_points = supply_points + excluded.supply_points,
-          borrow_points = borrow_points + excluded.borrow_points,
-          supply_usd    = excluded.supply_usd,
-          borrow_usd    = excluded.borrow_usd
-      `).run(w, season, b.asset, b.symbol, b.supplyPoints, b.borrowPoints, b.supplyUsd, b.borrowUsd);
+      stmt.run(
+        walletLower,
+        season,
+        b.asset.toLowerCase(),
+        b.symbol,
+        b.supplyPoints,
+        b.borrowPoints,
+        b.supplyUsd,
+        b.borrowUsd
+      );
     }
   });
 
-  upsert();
+  transaction();
 }
 
-// ── Write: log a completed snapshot ───────────────────────────────────────────
 export function logSnapshot(
   season: number,
   wallets: number,
   points: number,
   durationMs: number
 ): void {
-  const db = getDb();
-  db.prepare(`
-    INSERT INTO snapshot_log (season, ran_at, wallets, points, duration_ms)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(season, Date.now(), wallets, points, durationMs);
+  db.prepare(
+    `INSERT INTO snapshot_log (season, ran_at, wallets, points, duration_ms)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(season, Date.now(), wallets, points, durationMs);
 }
 
-
-// ── Active Wallets Table ─────────────────────────────────────────────────────
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS active_wallets (
-    wallet TEXT PRIMARY KEY,
-    first_seen INTEGER NOT NULL,
-    last_active INTEGER NOT NULL
-  ) WITHOUT ROWID;
-
-  CREATE INDEX IF NOT EXISTS idx_active_wallets_last_active 
-    ON active_wallets(last_active);
-`);
+// ── Active Wallets Functions ─────────────────────────────────────────────────
 
 export function addWallet(wallet: string): void {
   const now = Date.now();
-  db.prepare(`
-    INSERT INTO active_wallets (wallet, first_seen, last_active)
-    VALUES (?, ?, ?)
-    ON CONFLICT(wallet) DO UPDATE SET last_active = ?
-  `).run(wallet.toLowerCase(), now, now, now);
+  db.prepare(
+    `INSERT INTO active_wallets (wallet, first_seen, last_active)
+     VALUES (?, ?, ?)
+     ON CONFLICT(wallet) DO UPDATE SET last_active = ?`
+  ).run(wallet.toLowerCase(), now, now, now);
 }
 
 export function bulkAddWallets(wallets: string[]): void {
   const now = Date.now();
-  const stmt = db.prepare(`
-    INSERT INTO active_wallets (wallet, first_seen, last_active)
-    VALUES (?, ?, ?)
-    ON CONFLICT(wallet) DO UPDATE SET last_active = ?
-  `);
+  const stmt = db.prepare(
+    `INSERT INTO active_wallets (wallet, first_seen, last_active)
+     VALUES (?, ?, ?)
+     ON CONFLICT(wallet) DO UPDATE SET last_active = ?`
+  );
 
   const transaction = db.transaction((walletList: string[]) => {
     for (const wallet of walletList) {
@@ -247,11 +246,14 @@ export function bulkAddWallets(wallets: string[]): void {
 }
 
 export function getActiveWallets(): string[] {
-  return db.prepare('SELECT wallet FROM active_wallets ORDER BY last_active DESC')
-    .all()
-    .map((r: any) => r.wallet);
+  const rows = db
+    .prepare('SELECT wallet FROM active_wallets ORDER BY last_active DESC')
+    .all();
+  
+  return rows.map((r: any) => r.wallet);
 }
 
 export function getWalletCount(): number {
-  return db.prepare('SELECT COUNT(*) as count FROM active_wallets').get().count;
+  const row = db.prepare('SELECT COUNT(*) as count FROM active_wallets').get();
+  return (row as any).count;
 }
