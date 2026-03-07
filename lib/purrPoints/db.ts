@@ -205,3 +205,53 @@ export function logSnapshot(
     VALUES (?, ?, ?, ?, ?)
   `).run(season, Date.now(), wallets, points, durationMs);
 }
+
+
+// ── Active Wallets Table ─────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS active_wallets (
+    wallet TEXT PRIMARY KEY,
+    first_seen INTEGER NOT NULL,
+    last_active INTEGER NOT NULL
+  ) WITHOUT ROWID;
+
+  CREATE INDEX IF NOT EXISTS idx_active_wallets_last_active 
+    ON active_wallets(last_active);
+`);
+
+export function addWallet(wallet: string): void {
+  const now = Date.now();
+  db.prepare(`
+    INSERT INTO active_wallets (wallet, first_seen, last_active)
+    VALUES (?, ?, ?)
+    ON CONFLICT(wallet) DO UPDATE SET last_active = ?
+  `).run(wallet.toLowerCase(), now, now, now);
+}
+
+export function bulkAddWallets(wallets: string[]): void {
+  const now = Date.now();
+  const stmt = db.prepare(`
+    INSERT INTO active_wallets (wallet, first_seen, last_active)
+    VALUES (?, ?, ?)
+    ON CONFLICT(wallet) DO UPDATE SET last_active = ?
+  `);
+
+  const transaction = db.transaction((walletList: string[]) => {
+    for (const wallet of walletList) {
+      stmt.run(wallet.toLowerCase(), now, now, now);
+    }
+  });
+
+  transaction(wallets);
+}
+
+export function getActiveWallets(): string[] {
+  return db.prepare('SELECT wallet FROM active_wallets ORDER BY last_active DESC')
+    .all()
+    .map((r: any) => r.wallet);
+}
+
+export function getWalletCount(): number {
+  return db.prepare('SELECT COUNT(*) as count FROM active_wallets').get().count;
+}
