@@ -6,7 +6,7 @@
 //
 // What it does:
 //   1. Get all reserve data (prices, indexes) from the UI data provider
-//   2. Get list of all active wallets from on-chain events (Supply/Borrow)
+//   2. Get list of all active wallets from static wallet list
 //   3. For each wallet, read their current positions
 //   4. Calculate points: depositUSD × multiplier × 1 hour
 //   5. Save to database (accumulates on top of existing points)
@@ -83,12 +83,6 @@ const UI_POOL_DATA_ABI = [
   },
 ];
 
-// Lending pool events to find all active wallets
-const LENDING_POOL_ABI = [
-  'event Supply(address indexed reserve, address user, address indexed onBehalfOf, uint256 amount, uint16 indexed referralCode)',
-  'event Borrow(address indexed reserve, address user, address indexed onBehalfOf, uint256 amount, uint256 interestRateMode, uint256 borrowRate, uint16 indexed referralCode)',
-];
-
 // ── Main snapshot function ───────────────────────────────────────────────────
 
 export type SnapshotResult = {
@@ -149,62 +143,27 @@ export async function runSnapshot(): Promise<SnapshotResult> {
 
   console.log(`[Snapshot] Loaded ${Object.keys(priceMap).length} reserves`);
 
-  // ── Step 2: Get all unique wallets from events ───────────────────────────
-  console.log('[Snapshot] Fetching active wallets...');
-  const poolContract = new ethers.Contract(
-    POINTS_CONFIG.LENDING_POOL,
-    LENDING_POOL_ABI,
-    provider
-  );
-
-const currentBlock = await provider.getBlockNumber();
-const BLOCKS_PER_CHUNK = 10; // Alchemy free tier limit
-const TOTAL_BLOCKS_TO_SCAN = 100000; // scan last 1000 blocks total
-const fromBlock = Math.max(0, currentBlock - TOTAL_BLOCKS_TO_SCAN);
-
-// Scan in 10-block chunks to avoid Alchemy rate limits
-const supplyEvents: any[] = [];
-const borrowEvents: any[] = [];
-
-for (let start = fromBlock; start <= currentBlock; start += BLOCKS_PER_CHUNK) {
-  const end = Math.min(start + BLOCKS_PER_CHUNK - 1, currentBlock);
-  
-  const [supply, borrow] = await Promise.all([
-    poolContract.queryFilter(poolContract.filters.Supply(), start, end),
-    poolContract.queryFilter(poolContract.filters.Borrow(), start, end),
-  ]);
-  
-  supplyEvents.push(...supply);
-  borrowEvents.push(...borrow);
-  
-  // Small delay to avoid rate limits
-  await new Promise(resolve => setTimeout(resolve, 100));
-}
-
-  const walletSet = new Set<string>();
-  for (const e of [...supplyEvents, ...borrowEvents]) {
-    const args = (e as ethers.EventLog).args;
-    if (args?.onBehalfOf) walletSet.add(args.onBehalfOf.toLowerCase());
-  }
-
-  const wallets = Array.from(walletSet);
-  console.log(`[Snapshot] Found ${wallets.length} unique wallets`);
+  // ── Step 2: Get active wallets from static list ───────────────────────────
+  console.log('[Snapshot] Loading wallet list...');
+  const { ACTIVE_WALLETS } = await import('./wallets');
+  const wallets = ACTIVE_WALLETS.map(w => w.toLowerCase());
+  console.log(`[Snapshot] Found ${wallets.length} wallets in list`);
 
   // ── Step 3: For each wallet, get positions and award points ──────────────
   let totalSupplyUsd = 0;
   let totalBorrowUsd = 0;
   let totalPointsAwarded = 0;
 
-  const BATCH_SIZE = 3; // process 3 wallets at a time (public RPC is rate limited)
-    for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
-      const batch = wallets.slice(i, i + BATCH_SIZE);
-    
-      // Add 500ms delay between batches to avoid rate limits
-      if (i > 0) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+  const BATCH_SIZE = 3; // process 3 wallets at a time (avoid rate limits)
+  for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
+    const batch = wallets.slice(i, i + BATCH_SIZE);
 
-  await Promise.all(batch.map(async (wallet) => {
+    // Add 500ms delay between batches to avoid rate limits
+    if (i > 0) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    await Promise.all(batch.map(async (wallet) => {
       try {
         const [userReserves] = await uiContract.getUserReservesData(
           POINTS_CONFIG.POOL_ADDRESS_PROVIDER,
@@ -266,9 +225,9 @@ for (let start = fromBlock; start <= currentBlock; start += BLOCKS_PER_CHUNK) {
       }
     }));
 
-    // Log progress every 50 wallets
-    if ((i + BATCH_SIZE) % 50 === 0) {
-      console.log(`[Snapshot] Processed ${i + BATCH_SIZE}/${wallets.length} wallets...`);
+    // Log progress
+    if ((i + BATCH_SIZE) % 50 === 0 || i + BATCH_SIZE >= wallets.length) {
+      console.log(`[Snapshot] Processed ${Math.min(i + BATCH_SIZE, wallets.length)}/${wallets.length} wallets...`);
     }
   }
 
