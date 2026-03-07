@@ -195,11 +195,53 @@ export async function runSnapshot(): Promise<SnapshotResult> {
 
   console.log(`[Snapshot] Loaded ${Object.keys(priceMap).length} reserves`);
 
-  // ── Step 2: Get active wallets from static list ───────────────────────────
-  console.log('[Snapshot] Loading wallet list...');
-  const { ACTIVE_WALLETS } = await import('./wallets');
-  const wallets = ACTIVE_WALLETS.map(w => w.toLowerCase());
-  console.log(`[Snapshot] Found ${wallets.length} wallets in list`);
+  // ── Step 2: Get active wallets (database + auto-discovery) ────────────────
+  console.log('[Snapshot] Loading wallets from database...');
+  const { getActiveWallets, addWallet } = await import('./db');
+  let wallets = getActiveWallets();
+  console.log(`[Snapshot] Found ${wallets.length} existing wallets in database`);
+
+  // Auto-discover new wallets from recent blocks
+  console.log('[Snapshot] Scanning for new wallets...');
+  const poolContract = new ethers.Contract(
+    POINTS_CONFIG.LENDING_POOL,
+    ['event Supply(address indexed reserve, address user, address indexed onBehalfOf, uint256 amount, uint16 indexed referralCode)',
+     'event Borrow(address indexed reserve, address user, address indexed onBehalfOf, uint256 amount, uint256 interestRateMode, uint256 borrowRate, uint16 indexed referralCode)'],
+    provider
+  );
+
+  const currentBlock = await provider.getBlockNumber();
+  const fromBlock = Math.max(0, currentBlock - 1000); // scan last 1000 blocks only
+
+  try {
+    const [supplyEvents, borrowEvents] = await Promise.all([
+      poolContract.queryFilter(poolContract.filters.Supply(), fromBlock, currentBlock),
+      poolContract.queryFilter(poolContract.filters.Borrow(), fromBlock, currentBlock),
+    ]);
+
+    const newWallets = new Set<string>();
+    for (const e of [...supplyEvents, ...borrowEvents]) {
+      const args = (e as ethers.EventLog).args;
+      if (args?.onBehalfOf) {
+        const wallet = args.onBehalfOf.toLowerCase();
+        if (!wallets.includes(wallet)) {
+          newWallets.add(wallet);
+          addWallet(wallet); // add to database
+        }
+      }
+    }
+
+    if (newWallets.size > 0) {
+      console.log(`[Snapshot] Discovered ${newWallets.size} new wallets`);
+      wallets = [...wallets, ...Array.from(newWallets)];
+    }
+  } catch (err) {
+    console.error('[Snapshot] Event scanning failed, using existing wallets:', err);
+    // Continue with existing wallets if event scanning fails
+  }
+
+  console.log(`[Snapshot] Processing ${wallets.length} total wallets`);
+
 
   // ── Step 3: For each wallet, get positions and award points ──────────────
   let totalSupplyUsd = 0;
