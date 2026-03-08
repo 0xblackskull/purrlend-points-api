@@ -1,38 +1,39 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/points/leaderboard?season=1&limit=100
-// Returns top wallets ranked by total points for the given season
-// ─────────────────────────────────────────────────────────────────────────────
-
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getLeaderboard } from '../../../lib/purrPoints/db';
-import { getCurrentSeason, getCurrentSeasonDates } from '../../../lib/purrPoints/config';
+import { getLeaderboard, getCurrentSeason } from '../../../lib/purrPoints/db';
+import { POINTS_CONFIG } from '../../../lib/purrPoints/config';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   try {
-    // Get season from query or default to current
-    const season = req.query.season ? Number(req.query.season) : getCurrentSeason();
-    const limit = Math.min(Number(req.query.limit ?? 100), 500);
+    const season = getCurrentSeason();
+    const leaderboard = getLeaderboard(season, 100);
 
-    const entries = getLeaderboard(season, limit);
-    const { start, end } = getCurrentSeasonDates();
+    // Calculate season dates
+    const seasonStartMs = new Date(POINTS_CONFIG.SEASON_1_START).getTime();
+    const seasonDurationMs = POINTS_CONFIG.SEASON_DURATION_DAYS * 24 * 60 * 60 * 1000;
+    const seasonEndMs = seasonStartMs + seasonDurationMs;
 
     return res.status(200).json({
       season,
-      seasonStart: start.toISOString(),
-      seasonEnd: end.toISOString(),
-      leaderboard: entries.map((e, i) => ({
-        rank: i + 1,
-        wallet: e.wallet,
-        totalPoints: e.totalPoints,
-        supplyPoints: e.supplyPoints,
-        borrowPoints: e.borrowPoints,
-        lastUpdated: e.lastUpdated,
-      })),
+      seasonStart: new Date(seasonStartMs).toISOString(),
+      seasonEnd: new Date(seasonEndMs).toISOString(),
+      leaderboard,
     });
-  } catch (e: any) {
-    console.error('[API] Leaderboard error:', e);
-    return res.status(500).json({ error: e.message });
+  } catch (error: any) {
+    console.error('[API] Leaderboard error:', error);
+    return res.status(500).json({ error: error.message });
   }
 }
