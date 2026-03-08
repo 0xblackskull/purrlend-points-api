@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getLeaderboard, getCurrentSeason } from '../../../lib/purrPoints/db';
-import { POINTS_CONFIG } from '../../../lib/purrPoints/config';
+import { getLeaderboard } from '../../../lib/purrPoints/db';
+import { POINTS_CONFIG, getCurrentSeason } from '../../../lib/purrPoints/config';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // Enable CORS
