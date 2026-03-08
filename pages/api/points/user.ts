@@ -1,24 +1,30 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/points/user?wallet=0x...&season=1
-// Returns points + breakdown for a specific wallet
-// ─────────────────────────────────────────────────────────────────────────────
-
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { getWalletPoints, getWalletBreakdown } from '../../../lib/purrPoints/db';
-import { getCurrentSeason } from '../../../lib/purrPoints/config';
+import { getWalletPoints, getCurrentSeason } from '../../../lib/purrPoints/db';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  const wallet = (req.query.wallet as string)?.toLowerCase();
-  if (!wallet || !wallet.startsWith('0x')) {
-    return res.status(400).json({ error: 'Invalid wallet address' });
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const { wallet } = req.query;
+
+  if (!wallet || typeof wallet !== 'string') {
+    return res.status(400).json({ error: 'Missing wallet parameter' });
   }
 
   try {
-    const season = req.query.season ? Number(req.query.season) : getCurrentSeason();
+    const season = getCurrentSeason();
     const points = getWalletPoints(wallet, season);
-    const breakdown = getWalletBreakdown(wallet, season);
 
     if (!points) {
       return res.status(200).json({
@@ -27,8 +33,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         totalPoints: 0,
         supplyPoints: 0,
         borrowPoints: 0,
-        breakdown: [],
-        lastUpdated: null,
+        rank: 0,
       });
     }
 
@@ -38,11 +43,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       totalPoints: points.totalPoints,
       supplyPoints: points.supplyPoints,
       borrowPoints: points.borrowPoints,
-      breakdown,
-      lastUpdated: points.lastUpdated,
+      rank: 0, // TODO: calculate rank
     });
-  } catch (e: any) {
-    console.error('[API] User points error:', e);
-    return res.status(500).json({ error: e.message });
+  } catch (error: any) {
+    console.error('[API] User points error:', error);
+    return res.status(500).json({ error: error.message });
   }
 }
