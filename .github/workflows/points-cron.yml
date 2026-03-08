@@ -1,16 +1,9 @@
-name: Points Snapshot Cron
-
+name: Hourly Snapshot
 on:
   schedule:
-    - cron: "0 * * * *"   # runs every hour
-  workflow_dispatch:
-
+    - cron: '0 * * * *'
 jobs:
   snapshot:
     runs-on: ubuntu-latest
     steps:
-      - name: Call API
-        run: |
-          curl -X POST \
-          -H "x-cron-secret: purrlend_points_secret_2026" \
-          https://purrlend-points-api-production.up.railway.app/api/points/snapshot
+      - run: curl -X POST -H "x-cron-secret:purrlend_points_secret_2026" https://purrlend-points-api-production.up.railway.app/api/points/snapshot
