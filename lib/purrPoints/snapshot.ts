@@ -294,10 +294,14 @@ export async function runSnapshot(): Promise<SnapshotResult> {
           const borrowUsd = borrowBalance * price;
 
           // Points = USD × rate × multiplier × 1 hour
-          const assetSupplyPts =
-            supplyUsd * POINTS_CONFIG.SUPPLY_POINTS_PER_DOLLAR_PER_HOUR * multiplier;
-          const assetBorrowPts =
-            borrowUsd * POINTS_CONFIG.BORROW_POINTS_PER_DOLLAR_PER_HOUR * multiplier;
+
+          const supplyBoost = getBoostMultiplier(asset, 'supply');
+          const borrowBoost = getBoostMultiplier(asset, 'borrow');
+
+          const assetSupplyPts = supplyUsd * POINTS_CONFIG.SUPPLY_POINTS_PER_DOLLAR_PER_HOUR * multiplier * supplyBoost;
+
+         const assetBorrowPts = borrowUsd * POINTS_CONFIG.BORROW_POINTS_PER_DOLLAR_PER_HOUR * multiplier * borrowBoost;
+
 
           if (supplyUsd > 0 || borrowUsd > 0) {
             breakdown.push({
