@@ -4,6 +4,19 @@
 // Everything else reads from here.
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const BOOST_MULTIPLIERS = {
+  global: {
+    supply: 2,
+    borrow: 2,
+  },
+};
+
+export function getBoostMultiplier(asset: string, type: 'supply' | 'borrow'): number {
+  // For now, return global boost
+  // Later can add per-asset logic
+  return BOOST_MULTIPLIERS.global[type];
+}
+
 export const POINTS_CONFIG = {
 
   // ── Points Rate ────────────────────────────────────────────────────────────
