@@ -298,8 +298,7 @@ export async function runSnapshot(): Promise<SnapshotResult> {
           const supplyBoost = getBoostMultiplier(asset, 'supply');
           const borrowBoost = getBoostMultiplier(asset, 'borrow');
 
-          const assetSupplyPts = supplyUsd * POINTS_CONFIG.SUPPLY_POINTS_PER_DOLLAR_PER_HOUR * multiplier * supplyBoost;
-
+        const assetSupplyPts = supplyUsd * POINTS_CONFIG.SUPPLY_POINTS_PER_DOLLAR_PER_HOUR * multiplier * supplyBoost;
          const assetBorrowPts = borrowUsd * POINTS_CONFIG.BORROW_POINTS_PER_DOLLAR_PER_HOUR * multiplier * borrowBoost;
 
 
