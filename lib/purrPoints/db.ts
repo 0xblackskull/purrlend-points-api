@@ -66,6 +66,7 @@ export type WalletPoints = {
   borrowPoints: number;
   totalPoints: number;
   lastUpdated: number;
+  rank?: number;
 };
 
 export type AssetBreakdown = {
@@ -131,13 +132,14 @@ export function getLeaderboard(season: number, limit: number): WalletPoints[] {
     )
     .all(season, limit);
 
-  return rows.map((r) => ({
+  return rows.map((r, index) => ({
     wallet: r.wallet,
     season: r.season,
     supplyPoints: r.supply_points,
     borrowPoints: r.borrow_points,
     totalPoints: r.total_points,
     lastUpdated: r.last_updated,
+    rank: index + 1, // Add rank based on position
   }));
 }
 
