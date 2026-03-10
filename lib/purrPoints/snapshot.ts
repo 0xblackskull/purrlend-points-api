@@ -19,8 +19,9 @@ import {
   logSnapshot,
   getLastSnapshotTime,
   AssetBreakdown,
+  getReferrer,
+  awardReferralBonus,
 } from './db';
-import { getReferrer, awardReferralBonus } from './db';
 
 // ── ABIs (minimal, only what we need) ────────────────────────────────────────
 
@@ -188,11 +189,9 @@ export async function runSnapshot(): Promise<SnapshotResult> {
       borrow: Number(reserve.variableBorrowIndex) / 1e27,
       decimals,
     };
-      console.log(`[DEBUG] Asset ${asset.slice(0,8)}: price=$${priceMap[asset].toFixed(4)}, priceInRef=${priceInRef}, decimals=${decimals}`);
-
+    console.log(`[DEBUG] Asset ${asset.slice(0,8)}: price=$${priceMap[asset].toFixed(4)}, priceInRef=${priceInRef}, decimals=${decimals}`);
   }
   console.log(`[DEBUG] marketRefUnit=${marketRefUnit}, marketRefPriceUsd=${marketRefPriceUsd}`);
-
 
   console.log(`[Snapshot] Loaded ${Object.keys(priceMap).length} reserves`);
 
@@ -243,7 +242,6 @@ export async function runSnapshot(): Promise<SnapshotResult> {
 
   console.log(`[Snapshot] Processing ${wallets.length} total wallets`);
 
-
   // ── Step 3: For each wallet, get positions and award points ──────────────
   let totalSupplyUsd = 0;
   let totalBorrowUsd = 0;
@@ -266,10 +264,10 @@ export async function runSnapshot(): Promise<SnapshotResult> {
         );
 
         console.log(`[DEBUG] Wallet ${wallet.slice(0,8)} has ${userReserves.length} reserves`);
-          if (userReserves.length > 0) {
-            console.log(`[DEBUG] First reserve:`, userReserves[0].underlyingAsset, 
-              'Supply:', userReserves[0].scaledATokenBalance.toString());
-          }
+        if (userReserves.length > 0) {
+          console.log(`[DEBUG] First reserve:`, userReserves[0].underlyingAsset, 
+            'Supply:', userReserves[0].scaledATokenBalance.toString());
+        }
 
         let supplyPts = 0;
         let borrowPts = 0;
@@ -294,14 +292,12 @@ export async function runSnapshot(): Promise<SnapshotResult> {
           const supplyUsd = supplyBalance * price;
           const borrowUsd = borrowBalance * price;
 
-          // Points = USD × rate × multiplier × 1 hour
-
+          // Points = USD × rate × multiplier × boost × 1 hour
           const supplyBoost = getBoostMultiplier(asset, 'supply');
           const borrowBoost = getBoostMultiplier(asset, 'borrow');
 
-        const assetSupplyPts = supplyUsd * POINTS_CONFIG.SUPPLY_POINTS_PER_DOLLAR_PER_HOUR * multiplier * supplyBoost;
-         const assetBorrowPts = borrowUsd * POINTS_CONFIG.BORROW_POINTS_PER_DOLLAR_PER_HOUR * multiplier * borrowBoost;
-
+          const assetSupplyPts = supplyUsd * POINTS_CONFIG.SUPPLY_POINTS_PER_DOLLAR_PER_HOUR * multiplier * supplyBoost;
+          const assetBorrowPts = borrowUsd * POINTS_CONFIG.BORROW_POINTS_PER_DOLLAR_PER_HOUR * multiplier * borrowBoost;
 
           if (supplyUsd > 0 || borrowUsd > 0) {
             breakdown.push({
@@ -323,6 +319,19 @@ export async function runSnapshot(): Promise<SnapshotResult> {
         if (earnedThisHour > 0) {
           upsertWalletPoints(wallet, season, supplyPts, borrowPts, breakdown);
           totalPointsAwarded += earnedThisHour;
+          
+          // ── Award Referral Bonuses ────────────────────────────────────
+          // Check if this wallet was referred by someone
+          const referrer = getReferrer(wallet);
+          if (referrer) {
+            // Calculate 20% bonus for referrer
+            const bonusPoints = earnedThisHour * 0.20; // 20% bonus
+            
+            // Award bonus to referrer
+            awardReferralBonus(referrer, bonusPoints, season);
+            
+            console.log(`[Referral] ${wallet.slice(0,8)} earned ${earnedThisHour.toFixed(2)} pts → ${referrer.slice(0,8)} gets ${bonusPoints.toFixed(2)} bonus`);
+          }
         }
       } catch (e) {
         console.error(`[Snapshot] Failed for ${wallet}:`, e);
@@ -337,8 +346,6 @@ export async function runSnapshot(): Promise<SnapshotResult> {
 
   const durationMs = Date.now() - startTime;
   logSnapshot(season, wallets.length, totalPointsAwarded, durationMs);
-  updateWalletPoints(wallet, season, supplyPts, borrowPts);
-
 
   console.log(`[Snapshot] Complete in ${(durationMs / 1000).toFixed(1)}s`);
   console.log(`  Wallets: ${wallets.length}`);
@@ -354,22 +361,4 @@ export async function runSnapshot(): Promise<SnapshotResult> {
     pointsAwarded: totalPointsAwarded,
     durationMs,
   };
-}
-
-// In snapshot.ts, after awarding points to each wallet, add referral bonus logic:
-
-
-// ADD THIS NEW SECTION:
-// ── Award Referral Bonuses ────────────────────────────────────────────────
-// Check if this wallet was referred by someone
-const referrer = getReferrer(wallet);
-if (referrer) {
-  // Calculate 20% bonus for referrer
-  const totalPts = supplyPts + borrowPts;
-  const bonusPoints = totalPts * 0.20; // 20% bonus
-  
-  // Award bonus to referrer
-  awardReferralBonus(referrer, bonusPoints, season);
-  
-  console.log(`[Referral] ${wallet} earned ${totalPts.toFixed(2)} pts → ${referrer} gets ${bonusPoints.toFixed(2)} bonus`);
 }
