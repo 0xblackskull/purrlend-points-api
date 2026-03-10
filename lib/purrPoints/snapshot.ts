@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ethers } from 'ethers';
-import { POINTS_CONFIG, ASSET_NAMES, getCurrentSeason } from './config';
+import { POINTS_CONFIG, ASSET_NAMES, getCurrentSeason, getBoostMultiplier } from './config';
 import {
   upsertWalletPoints,
   logSnapshot,
