@@ -20,6 +20,7 @@ import {
   getLastSnapshotTime,
   AssetBreakdown,
 } from './db';
+import { getReferrer, awardReferralBonus } from './db';
 
 // ── ABIs (minimal, only what we need) ────────────────────────────────────────
 
@@ -336,6 +337,8 @@ export async function runSnapshot(): Promise<SnapshotResult> {
 
   const durationMs = Date.now() - startTime;
   logSnapshot(season, wallets.length, totalPointsAwarded, durationMs);
+  updateWalletPoints(wallet, season, supplyPts, borrowPts);
+
 
   console.log(`[Snapshot] Complete in ${(durationMs / 1000).toFixed(1)}s`);
   console.log(`  Wallets: ${wallets.length}`);
@@ -351,4 +354,22 @@ export async function runSnapshot(): Promise<SnapshotResult> {
     pointsAwarded: totalPointsAwarded,
     durationMs,
   };
+}
+
+// In snapshot.ts, after awarding points to each wallet, add referral bonus logic:
+
+
+// ADD THIS NEW SECTION:
+// ── Award Referral Bonuses ────────────────────────────────────────────────
+// Check if this wallet was referred by someone
+const referrer = getReferrer(wallet);
+if (referrer) {
+  // Calculate 20% bonus for referrer
+  const totalPts = supplyPts + borrowPts;
+  const bonusPoints = totalPts * 0.20; // 20% bonus
+  
+  // Award bonus to referrer
+  awardReferralBonus(referrer, bonusPoints, season);
+  
+  console.log(`[Referral] ${wallet} earned ${totalPts.toFixed(2)} pts → ${referrer} gets ${bonusPoints.toFixed(2)} bonus`);
 }
