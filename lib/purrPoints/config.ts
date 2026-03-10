@@ -4,7 +4,10 @@
 // Everything else reads from here.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const BOOST_MULTIPLIERS = {
+export const BOOST_MULTIPLIERS: {
+  global: { supply: number; borrow: number };
+  perAsset?: { [key: string]: { supply: number; borrow: number } };
+} = {
   global: {
     supply: 2,
     borrow: 2,
