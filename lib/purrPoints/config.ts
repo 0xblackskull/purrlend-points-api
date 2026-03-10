@@ -11,9 +11,15 @@ export const BOOST_MULTIPLIERS = {
   },
 };
 
-export function getBoostMultiplier(asset: string, type: 'supply' | 'borrow'): number {
-  // For now, return global boost
-  // Later can add per-asset logic
+export function getBoostMultiplier(assetAddress: string, type: 'supply' | 'borrow'): number {
+  const key = assetAddress.toLowerCase();
+  
+  // Check for per-asset boost first
+  if (BOOST_MULTIPLIERS.perAsset && BOOST_MULTIPLIERS.perAsset[key]) {
+    return BOOST_MULTIPLIERS.perAsset[key][type];
+  }
+  
+  // Fall back to global boost
   return BOOST_MULTIPLIERS.global[type];
 }
 
