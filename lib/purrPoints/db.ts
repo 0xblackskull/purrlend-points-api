@@ -259,3 +259,189 @@ export function getWalletCount(): number {
   const row: any = db.prepare('SELECT COUNT(*) as count FROM active_wallets').get();
   return row.count;
 }
+
+
+
+// Add these new tables and functions to your existing db.ts
+
+// ── Referral Tables ──────────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS referral_codes (
+    wallet TEXT PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS referrals (
+    referrer_wallet TEXT NOT NULL,
+    referee_wallet TEXT PRIMARY KEY,
+    referral_code TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (referrer_wallet) REFERENCES referral_codes(wallet)
+  );
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS referral_points (
+    wallet TEXT NOT NULL,
+    season INTEGER NOT NULL,
+    referral_points REAL DEFAULT 0,
+    last_updated INTEGER NOT NULL,
+    PRIMARY KEY (wallet, season)
+  );
+`);
+
+// ── Referral Functions ───────────────────────────────────────────────────────
+/**
+ * Generate a unique referral code for a wallet
+ */
+export function generateReferralCode(wallet: string): string {
+  const normalized = wallet.toLowerCase();
+  
+  // Check if code already exists
+  const existing: any = db.prepare('SELECT code FROM referral_codes WHERE wallet = ?').get(normalized);
+  if (existing) {
+    return existing.code;
+  }
+
+  // Generate unique code: PURR-XXXXXX (6 random chars)
+  let code: string;
+  let attempts = 0;
+  
+  while (attempts < 10) {
+    const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
+    code = `PURR-${randomPart}`;
+    
+    // Check if code is unique
+    const codeExists: any = db.prepare('SELECT code FROM referral_codes WHERE code = ?').get(code);
+    if (!codeExists) {
+      // Insert new code
+      db.prepare('INSERT INTO referral_codes (wallet, code, created_at) VALUES (?, ?, ?)').run(
+        normalized,
+        code,
+        Date.now()
+      );
+      return code;
+    }
+    attempts++;
+  }
+
+  throw new Error('Failed to generate unique referral code');
+}
+
+/**
+ * Apply a referral code (one-time only)
+ */
+export function applyReferralCode(refereeWallet: string, code: string): boolean {
+  const normalizedReferee = refereeWallet.toLowerCase();
+  const normalizedCode = code.toUpperCase().trim();
+
+  // Check if user already has a referrer
+  const existing: any = db.prepare('SELECT * FROM referrals WHERE referee_wallet = ?').get(normalizedReferee);
+  if (existing) {
+    return false; // Already used a code
+  }
+
+  // Find the referrer by code
+  const referrer: any = db.prepare('SELECT wallet FROM referral_codes WHERE code = ?').get(normalizedCode);
+  if (!referrer) {
+    return false; // Invalid code
+  }
+
+  // Don't allow self-referral
+  if (referrer.wallet === normalizedReferee) {
+    return false;
+  }
+
+  // Create referral relationship
+  db.prepare('INSERT INTO referrals (referrer_wallet, referee_wallet, referral_code, created_at) VALUES (?, ?, ?, ?)').run(
+    referrer.wallet,
+    normalizedReferee,
+    normalizedCode,
+    Date.now()
+  );
+
+  return true;
+}
+
+/**
+ * Get referral code for a wallet
+ */
+export function getReferralCode(wallet: string): string | null {
+  const normalized = wallet.toLowerCase();
+  const result: any = db.prepare('SELECT code FROM referral_codes WHERE wallet = ?').get(normalized);
+  return result ? result.code : null;
+}
+
+/**
+ * Get referrer for a wallet (if they used a code)
+ */
+export function getReferrer(wallet: string): string | null {
+  const normalized = wallet.toLowerCase();
+  const result: any = db.prepare('SELECT referrer_wallet FROM referrals WHERE referee_wallet = ?').get(normalized);
+  return result ? result.referrer_wallet : null;
+}
+
+/**
+ * Get all referees for a wallet
+ */
+export function getReferees(wallet: string): string[] {
+  const normalized = wallet.toLowerCase();
+  const results: any[] = db.prepare('SELECT referee_wallet FROM referrals WHERE referrer_wallet = ?').all(normalized);
+  return results.map(r => r.referee_wallet);
+}
+
+/**
+ * Get referral stats for a wallet
+ */
+export function getReferralStats(wallet: string, season: number): {
+  code: string | null;
+  referralCount: number;
+  referralPoints: number;
+  referees: string[];
+} {
+  const normalized = wallet.toLowerCase();
+  
+  const code = getReferralCode(normalized);
+  const referees = getReferees(normalized);
+  
+  // Get referral points for this season
+  const pointsResult: any = db.prepare(
+    'SELECT referral_points FROM referral_points WHERE wallet = ? AND season = ?'
+  ).get(normalized, season);
+  
+  return {
+    code,
+    referralCount: referees.length,
+    referralPoints: pointsResult ? pointsResult.referral_points : 0,
+    referees,
+  };
+}
+
+/**
+ * Award referral bonus points
+ */
+export function awardReferralBonus(referrerWallet: string, bonusPoints: number, season: number): void {
+  const normalized = referrerWallet.toLowerCase();
+  
+  // Upsert referral points
+  db.prepare(`
+    INSERT INTO referral_points (wallet, season, referral_points, last_updated)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(wallet, season) DO UPDATE SET
+      referral_points = referral_points + excluded.referral_points,
+      last_updated = excluded.last_updated
+  `).run(normalized, season, bonusPoints, Date.now());
+}
+
+/**
+ * Check if wallet has used a referral code
+ */
+export function hasUsedReferralCode(wallet: string): boolean {
+  const normalized = wallet.toLowerCase();
+  const result: any = db.prepare('SELECT 1 FROM referrals WHERE referee_wallet = ?').get(normalized);
+  return !!result;
+}
