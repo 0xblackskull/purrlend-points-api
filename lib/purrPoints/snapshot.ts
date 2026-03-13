@@ -270,7 +270,7 @@ export async function runSnapshot(): Promise<SnapshotResult> {
           const asset = r.underlyingAsset.toLowerCase();
           const price = priceMap[asset] ?? 0;
           const idx = indexMap[asset];
-          const multiplier = POINTS_CONFIG.ASSET_MULTIPLIERS[asset] ?? 0;
+          const multiplier = POINTS_CONFIG.ASSET_MULTIPLIERS[asset as keyof typeof POINTS_CONFIG.ASSET_MULTIPLIERS] ?? 0;
 
           if (!idx || multiplier === 0) continue; // asset not whitelisted
 
