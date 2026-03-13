@@ -8,12 +8,12 @@
 //   1. Get all reserve data (prices, indexes) from the UI data provider
 //   2. Get list of all active wallets from static wallet list
 //   3. For each wallet, read their current positions
-//   4. Calculate points: depositUSD × multiplier × 1 hour
+//   4. Calculate points: depositUSD × multiplier × tier boost × 1 hour
 //   5. Save to database (accumulates on top of existing points)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ethers } from 'ethers';
-import { POINTS_CONFIG, ASSET_NAMES, getCurrentSeason, getBoostMultiplier } from './config';
+import { POINTS_CONFIG, ASSET_NAMES, getCurrentSeason, applyTierBoost, getTierName } from './config';
 import {
   upsertWalletPoints,
   logSnapshot,
@@ -21,6 +21,7 @@ import {
   AssetBreakdown,
   getReferrer,
   awardReferralBonus,
+  getWalletPoints,
 } from './db';
 
 // ── ABIs (minimal, only what we need) ────────────────────────────────────────
@@ -189,9 +190,7 @@ export async function runSnapshot(): Promise<SnapshotResult> {
       borrow: Number(reserve.variableBorrowIndex) / 1e27,
       decimals,
     };
-    console.log(`[DEBUG] Asset ${asset.slice(0,8)}: price=$${priceMap[asset].toFixed(4)}, priceInRef=${priceInRef}, decimals=${decimals}`);
   }
-  console.log(`[DEBUG] marketRefUnit=${marketRefUnit}, marketRefPriceUsd=${marketRefPriceUsd}`);
 
   console.log(`[Snapshot] Loaded ${Object.keys(priceMap).length} reserves`);
 
@@ -263,12 +262,6 @@ export async function runSnapshot(): Promise<SnapshotResult> {
           wallet
         );
 
-        console.log(`[DEBUG] Wallet ${wallet.slice(0,8)} has ${userReserves.length} reserves`);
-        if (userReserves.length > 0) {
-          console.log(`[DEBUG] First reserve:`, userReserves[0].underlyingAsset, 
-            'Supply:', userReserves[0].scaledATokenBalance.toString());
-        }
-
         let supplyPts = 0;
         let borrowPts = 0;
         const breakdown: AssetBreakdown[] = [];
@@ -292,12 +285,9 @@ export async function runSnapshot(): Promise<SnapshotResult> {
           const supplyUsd = supplyBalance * price;
           const borrowUsd = borrowBalance * price;
 
-          // Points = USD × rate × multiplier × boost × 1 hour
-          const supplyBoost = getBoostMultiplier(asset, 'supply');
-          const borrowBoost = getBoostMultiplier(asset, 'borrow');
-
-          const assetSupplyPts = supplyUsd * POINTS_CONFIG.SUPPLY_POINTS_PER_DOLLAR_PER_HOUR * multiplier * supplyBoost;
-          const assetBorrowPts = borrowUsd * POINTS_CONFIG.BORROW_POINTS_PER_DOLLAR_PER_HOUR * multiplier * borrowBoost;
+          // Calculate base points (no tier boost yet)
+          const assetSupplyPts = supplyUsd * POINTS_CONFIG.SUPPLY_POINTS_PER_DOLLAR_PER_HOUR * multiplier;
+          const assetBorrowPts = borrowUsd * POINTS_CONFIG.BORROW_POINTS_PER_DOLLAR_PER_HOUR * multiplier;
 
           if (supplyUsd > 0 || borrowUsd > 0) {
             breakdown.push({
@@ -315,22 +305,37 @@ export async function runSnapshot(): Promise<SnapshotResult> {
           }
         }
 
-        const earnedThisHour = supplyPts + borrowPts;
-        if (earnedThisHour > 0) {
-          upsertWalletPoints(wallet, season, supplyPts, borrowPts, breakdown);
-          totalPointsAwarded += earnedThisHour;
+        // ── Apply Tier Boost ──────────────────────────────────────────────
+        const basePoints = supplyPts + borrowPts;
+        
+        if (basePoints > 0) {
+          // Get user's current total points to determine tier
+          const currentPoints = getWalletPoints(wallet, season);
+          const currentTotal = currentPoints ? currentPoints.totalPoints : 0;
+
+          // Apply tier boost based on current tier
+          const tierName = getTierName(currentTotal);
+          const boostedPoints = applyTierBoost(basePoints, currentTotal);
+
+          // Split boosted points back to supply/borrow proportionally
+          const supplyRatio = basePoints > 0 ? supplyPts / basePoints : 0;
+          const borrowRatio = basePoints > 0 ? borrowPts / basePoints : 0;
+
+          const finalSupplyPts = boostedPoints * supplyRatio;
+          const finalBorrowPts = boostedPoints * borrowRatio;
+
+          // Save with tier boost applied
+          upsertWalletPoints(wallet, season, finalSupplyPts, finalBorrowPts, breakdown);
+          totalPointsAwarded += boostedPoints;
           
-          // ── Award Referral Bonuses ────────────────────────────────────
-          // Check if this wallet was referred by someone
+          console.log(`[Tier] ${wallet.slice(0,8)} - ${tierName} tier: ${basePoints.toFixed(2)} → ${boostedPoints.toFixed(2)} pts`);
+
+          // ── Award Referral Bonuses (12%) ──────────────────────────────
           const referrer = getReferrer(wallet);
           if (referrer) {
-            // Calculate 20% bonus for referrer
-            const bonusPoints = earnedThisHour * 0.20; // 20% bonus
-            
-            // Award bonus to referrer
+            const bonusPoints = boostedPoints * POINTS_CONFIG.REFERRAL_BONUS_PERCENTAGE; // 12%
             awardReferralBonus(referrer, bonusPoints, season);
-            
-            console.log(`[Referral] ${wallet.slice(0,8)} earned ${earnedThisHour.toFixed(2)} pts → ${referrer.slice(0,8)} gets ${bonusPoints.toFixed(2)} bonus`);
+            console.log(`[Referral] ${wallet.slice(0,8)} earned ${boostedPoints.toFixed(2)} pts → ${referrer.slice(0,8)} gets ${bonusPoints.toFixed(2)} bonus (12%)`);
           }
         }
       } catch (e) {
